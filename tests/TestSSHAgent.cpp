@@ -34,7 +34,7 @@ void TestSSHAgent::initTestCase()
     QLocale::setDefault(QLocale::c());
 
     // Create temporary config file
-    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), {});
+    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), TemporaryFile::createTempLocalConfigFile());
 
     // default config must not enable agent
     SSHAgent agent;

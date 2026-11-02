@@ -35,6 +35,7 @@ class ReportsDialog;
 class FileWatcher;
 class EditEntryWidget;
 class EditGroupWidget;
+class EditEntryDialog;
 class EntryView;
 class EntrySearcher;
 class GroupView;
@@ -272,6 +273,7 @@ private slots:
     void entryActivationSignalReceived(Entry* entry, EntryModel::ModelColumn column);
     void switchBackToEntryEdit();
     void switchToHistoryView(Entry* entry);
+    void entryEditFinished(bool accepted);
     void switchToEntryEdit(Entry*);
     void switchToEntryEdit(Entry* entry, bool create);
     void switchToGroupEdit(Group* entry, bool create);
@@ -298,6 +300,9 @@ private slots:
 
 private:
     int addChildWidget(QWidget* w);
+    // Close the separate entry window. False means the user kept it open.
+    bool closeEntryEditor();
+    bool entryEditorTouchesGroup(const Group* group) const;
     void processAutoOpen();
     void openDatabaseFromEntry(const Entry* entry, bool inBackground = true);
     void performIconDownloads(const QList<Entry*>& entries, bool force = false, bool downloadInBackground = false);
@@ -314,6 +319,7 @@ private:
     QPointer<QLabel> m_searchingLabel;
     QPointer<ElidedLabel> m_shareLabel;
     QPointer<EditEntryWidget> m_editEntryWidget;
+    QPointer<EditEntryDialog> m_editEntryDialog;
     QPointer<EditGroupWidget> m_editGroupWidget;
     QPointer<EditEntryWidget> m_historyEditEntryWidget;
     QPointer<ReportsDialog> m_reportsDialog;

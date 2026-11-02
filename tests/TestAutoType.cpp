@@ -39,7 +39,7 @@ void TestAutoType::initTestCase()
     QLocale::setDefault(QLocale::c());
 
     // Create temporary config file
-    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), {});
+    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), TemporaryFile::createTempLocalConfigFile());
     config()->set(Config::AutoTypeDelay, 1);
     config()->set(Config::Security_AutoTypeAsk, false);
     AutoType::createTestInstance();

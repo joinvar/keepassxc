@@ -50,6 +50,7 @@
 #include "gui/TotpExportSettingsDialog.h"
 #include "gui/TotpSetupDialog.h"
 #include "gui/dbsettings/DatabaseSettingsDialog.h"
+#include "gui/entry/EditEntryDialog.h"
 #include "gui/entry/EntryView.h"
 #include "gui/group/EditGroupWidget.h"
 #include "gui/group/GroupView.h"
@@ -186,17 +187,17 @@ DatabaseWidget::DatabaseWidget(QSharedPointer<Database> db, QWidget* parent)
 
     m_editEntryWidget->setObjectName("editEntryWidget");
     m_historyEditEntryWidget->setObjectName("editEntryHistoryWidget");
+    // Keep entry editing in its own window so the group tree stays visible.
+    m_editEntryDialog = new EditEntryDialog(m_editEntryWidget, m_historyEditEntryWidget, this);
     m_editGroupWidget->setObjectName("editGroupWidget");
     m_reportsDialog->setObjectName("reportsDialog");
     m_databaseSettingDialog->setObjectName("databaseSettingsDialog");
     m_databaseOpenWidget->setObjectName("databaseOpenWidget");
 
     addChildWidget(m_mainWidget);
-    addChildWidget(m_editEntryWidget);
     addChildWidget(m_editGroupWidget);
     addChildWidget(m_reportsDialog);
     addChildWidget(m_databaseSettingDialog);
-    addChildWidget(m_historyEditEntryWidget);
     addChildWidget(m_databaseOpenWidget);
 
     // clang-format off
@@ -212,7 +213,7 @@ DatabaseWidget::DatabaseWidget(QSharedPointer<Database> db, QWidget* parent)
     connect(m_entryView, SIGNAL(entryActivated(Entry*,EntryModel::ModelColumn)),
         SLOT(entryActivationSignalReceived(Entry*,EntryModel::ModelColumn)));
     connect(m_entryView, SIGNAL(entrySelectionChanged(Entry*)), SLOT(onEntryChanged(Entry*)));
-    connect(m_editEntryWidget, SIGNAL(editFinished(bool)), SLOT(switchToMainView(bool)));
+    connect(m_editEntryWidget, SIGNAL(editFinished(bool)), SLOT(entryEditFinished(bool)));
     connect(m_editEntryWidget, SIGNAL(historyEntryActivated(Entry*)), SLOT(switchToHistoryView(Entry*)));
     connect(m_historyEditEntryWidget, SIGNAL(editFinished(bool)), SLOT(switchBackToEntryEdit()));
     connect(m_editGroupWidget, SIGNAL(editFinished(bool)), SLOT(switchToMainView(bool)));
@@ -318,7 +319,7 @@ bool DatabaseWidget::isEntryViewActive() const
 
 bool DatabaseWidget::isEntryEditActive() const
 {
-    return currentWidget() == m_editEntryWidget;
+    return m_editEntryDialog && m_editEntryDialog->isVisible();
 }
 
 bool DatabaseWidget::isGroupEditActive() const
@@ -328,9 +329,10 @@ bool DatabaseWidget::isGroupEditActive() const
 
 bool DatabaseWidget::isEditWidgetModified() const
 {
-    if (currentWidget() == m_editEntryWidget) {
-        return m_editEntryWidget->isModified();
-    } else if (currentWidget() == m_editGroupWidget) {
+    if (isEntryEditActive() && m_editEntryWidget && m_editEntryWidget->isModified()) {
+        return true;
+    }
+    if (currentWidget() == m_editGroupWidget) {
         return m_editGroupWidget->isModified();
     }
     return false;
@@ -444,10 +446,17 @@ bool DatabaseWidget::setEntryViewState(const QByteArray& state) const
 
 void DatabaseWidget::clearAllWidgets()
 {
+    if (m_editEntryDialog) {
+        m_editEntryDialog->discard();
+    }
     m_editEntryWidget->clear();
     m_historyEditEntryWidget->clear();
     m_editGroupWidget->clear();
     m_previewView->clear();
+    if (m_newEntry) {
+        m_newEntry.reset();
+        m_newParent = nullptr;
+    }
 }
 
 void DatabaseWidget::emitCurrentModeChanged()
@@ -459,6 +468,9 @@ void DatabaseWidget::createEntry()
 {
     Q_ASSERT(m_groupView->currentGroup());
     if (!m_groupView->currentGroup()) {
+        return;
+    }
+    if (!closeEntryEditor()) {
         return;
     }
 
@@ -564,7 +576,7 @@ void DatabaseWidget::setupTotp()
 
     auto setupTotpDialog = new TotpSetupDialog(this, currentEntry);
     connect(setupTotpDialog, SIGNAL(totpUpdated()), SIGNAL(entrySelectionChanged()));
-    if (currentWidget() == m_editEntryWidget) {
+    if (isEntryEditActive()) {
         // Entry is being edited, tell it when we are finished updating TOTP
         connect(setupTotpDialog, SIGNAL(totpUpdated()), m_editEntryWidget, SLOT(updateTotp()));
     }
@@ -574,6 +586,19 @@ void DatabaseWidget::setupTotp()
 
 void DatabaseWidget::expireSelectedEntries()
 {
+    if (isEntryEditActive()) {
+        auto* editing = m_editEntryWidget->currentEntry();
+        const QModelIndexList selected = m_entryView->selectionModel()->selectedRows();
+        for (const auto& index : selected) {
+            if (m_entryView->entryFromIndex(index) == editing) {
+                if (!closeEntryEditor()) {
+                    return;
+                }
+                break;
+            }
+        }
+    }
+
     const QModelIndexList selected = m_entryView->selectionModel()->selectedRows();
     for (const auto& index : selected) {
         auto entry = m_entryView->entryFromIndex(index);
@@ -628,6 +653,12 @@ void DatabaseWidget::deleteEntries(QList<Entry*> selectedEntries, bool confirm)
 {
     if (selectedEntries.isEmpty()) {
         return;
+    }
+
+    if (isEntryEditActive() && selectedEntries.contains(m_editEntryWidget->currentEntry())) {
+        if (!closeEntryEditor()) {
+            return;
+        }
     }
 
     // Find the index above the first entry for selection after deletion
@@ -1067,10 +1098,6 @@ void DatabaseWidget::openUrlForEntry(Entry* entry)
 
 Entry* DatabaseWidget::currentSelectedEntry() const
 {
-    if (currentWidget() == m_editEntryWidget) {
-        return m_editEntryWidget->currentEntry();
-    }
-
     return m_entryView->currentEntry();
 }
 
@@ -1110,6 +1137,9 @@ void DatabaseWidget::deleteGroup()
     Group* currentGroup = m_groupView->currentGroup();
     Q_ASSERT(currentGroup && canDeleteCurrentGroup());
     if (!currentGroup || !canDeleteCurrentGroup()) {
+        return;
+    }
+    if (entryEditorTouchesGroup(currentGroup) && !closeEntryEditor()) {
         return;
     }
 
@@ -1265,12 +1295,40 @@ void DatabaseWidget::switchToHistoryView(Entry* entry)
 {
     auto entryTitle = m_editEntryWidget->currentEntry() ? m_editEntryWidget->currentEntry()->title() : "";
     m_historyEditEntryWidget->loadEntry(entry, false, true, entryTitle, m_db);
-    setCurrentWidget(m_historyEditEntryWidget);
+    m_editEntryDialog->showHistory(m_historyEditEntryWidget->headlineLabel()->text());
 }
 
 void DatabaseWidget::switchBackToEntryEdit()
 {
-    setCurrentWidget(m_editEntryWidget);
+    m_editEntryDialog->showEditor(m_editEntryWidget->headlineLabel()->text());
+}
+
+void DatabaseWidget::entryEditFinished(bool accepted)
+{
+    if (m_editEntryDialog) {
+        m_editEntryDialog->hide();
+    }
+    switchToMainView(accepted);
+}
+
+bool DatabaseWidget::closeEntryEditor()
+{
+    if (!m_editEntryDialog || !m_editEntryDialog->isVisible()) {
+        return true;
+    }
+    return m_editEntryDialog->requestClose();
+}
+
+bool DatabaseWidget::entryEditorTouchesGroup(const Group* group) const
+{
+    if (!isEntryEditActive() || !group) {
+        return false;
+    }
+    if (m_newParent && (m_newParent == group || group->findGroupByUuid(m_newParent->uuid()))) {
+        return true;
+    }
+    auto* editing = m_editEntryWidget->currentEntry();
+    return editing && group->findEntryByUuid(editing->uuid());
 }
 
 void DatabaseWidget::switchToEntryEdit(Entry* entry)
@@ -1280,6 +1338,19 @@ void DatabaseWidget::switchToEntryEdit(Entry* entry)
 
 void DatabaseWidget::switchToEntryEdit(Entry* entry, bool create)
 {
+    if (!entry) {
+        return;
+    }
+
+    // Bring the open window forward when the same entry is edited again.
+    if (!create && isEntryEditActive() && m_editEntryWidget->currentEntry() == entry) {
+        m_editEntryDialog->showEditor(m_editEntryWidget->headlineLabel()->text());
+        return;
+    }
+    if (!closeEntryEditor()) {
+        return;
+    }
+
     // If creating an entry, it will be in `currentGroup()` so it's
     // okay to use but when editing, the entry may not be in
     // `currentGroup()` so we get the entry's group.
@@ -1293,10 +1364,14 @@ void DatabaseWidget::switchToEntryEdit(Entry* entry, bool create)
     }
 
     Q_ASSERT(group);
+    if (!group) {
+        return;
+    }
 
-    // Setup the entry edit widget and display
+    // Show the window before loading so the title field can take focus.
+    m_editEntryDialog->showEditor({});
     m_editEntryWidget->loadEntry(entry, create, false, group->name(), m_db);
-    setCurrentWidget(m_editEntryWidget);
+    m_editEntryDialog->setWindowTitle(m_editEntryWidget->headlineLabel()->text());
 }
 
 void DatabaseWidget::switchToGroupEdit(Group* group, bool create)

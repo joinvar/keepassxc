@@ -68,6 +68,26 @@
 #include "keys/FileKey.h"
 #include "mock/MockRemoteProcess.h"
 
+// ReportsDialog owns another EditEntryWidget with the same object name.
+// The entry window is the one that is not inside that dialog.
+static EditEntryWidget* mainEntryEditor(DatabaseWidget* db)
+{
+    EditEntryWidget* found = nullptr;
+    for (auto* widget : db->findChildren<EditEntryWidget*>("editEntryWidget")) {
+        bool inReports = false;
+        for (QObject* parent = widget->parent(); parent; parent = parent->parent()) {
+            if (parent->objectName() == QLatin1String("reportsDialog")) {
+                inReports = true;
+                break;
+            }
+        }
+        if (!inReports) {
+            found = widget;
+        }
+    }
+    return found;
+}
+
 #define TEST_MODAL_NO_WAIT(TEST_CODE)                                                                                  \
     bool dialogFinished = false;                                                                                       \
     QTimer::singleShot(0, [&]() { TEST_CODE dialogFinished = true; })
@@ -96,7 +116,7 @@ void TestGui::initTestCase()
     QVERIFY(Crypto::init());
 
     // Create temporary config file
-    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), {});
+    Config::createConfigFromFile(TemporaryFile::createTempConfigFile(), TemporaryFile::createTempLocalConfigFile());
 
     QLocale::setDefault(QLocale::c());
     Application::bootstrap();
@@ -635,10 +655,12 @@ void TestGui::testEditEntry()
     // Record current history count
     int editCount = entry->historyItems().size();
 
-    // Edit the first entry ("Sample Entry")
+    // Edit the first entry ("Sample Entry") in its own window. The main list stays visible.
     QTest::mouseClick(entryEditWidget, Qt::LeftButton);
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::ViewMode);
+    QVERIFY(entryView->isVisible());
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
+    QVERIFY(editEntryWidget->isVisible());
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QTest::keyClicks(titleEdit, "_test");
 
@@ -652,7 +674,8 @@ void TestGui::testEditEntry()
     // Apply the edit
     QTRY_VERIFY(applyButton->isEnabled());
     QTest::mouseClick(applyButton, Qt::LeftButton);
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::ViewMode);
+    QVERIFY(editEntryWidget->isVisible());
     QCOMPARE(entry->title(), QString("Sample Entry_test"));
     QCOMPARE(entry->historyItems().size(), ++editCount);
     QVERIFY(!applyButton->isEnabled());
@@ -673,7 +696,7 @@ void TestGui::testEditEntry()
     auto entryHistoryWidget = m_dbWidget->findChild<QWidget*>("editEntryHistoryWidget");
     QVERIFY(entryHistoryWidget);
     QVERIFY(entryHistoryWidget->isVisible());
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::ViewMode);
     QTest::keyClick(entryHistoryWidget, Qt::Key_Escape);
     QVERIFY(historyView->isVisible());
 
@@ -750,7 +773,8 @@ void TestGui::testEditEntry()
     QTest::mouseClick(entryEditWidget, Qt::LeftButton);
     okButton = editEntryWidgetButtonBox->button(QDialogButtonBox::Ok);
     QVERIFY(okButton);
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::ViewMode);
+    QVERIFY(editEntryWidget->isVisible());
     titleEdit->setText("multiline\ntitle");
     editEntryWidget->findChild<QComboBox*>("usernameComboBox")->lineEdit()->setText("multiline\nusername");
     editEntryWidget->findChild<PasswordWidget*>("passwordEdit")->setText("multiline\npassword");
@@ -786,7 +810,7 @@ void TestGui::testSearchEditEntry()
     // Find buttons for entry creation
     auto* toolBar = m_mainWindow->findChild<QToolBar*>("toolBar");
     QWidget* entryNewWidget = toolBar->widgetForAction(m_mainWindow->findChild<QAction*>("actionEntryNew"));
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     auto* editEntryWidgetButtonBox = editEntryWidget->findChild<QDialogButtonBox*>("buttonBox");
 
@@ -812,7 +836,7 @@ void TestGui::testSearchEditEntry()
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
     // Check the path in header is "parent-group > entry"
-    QCOMPARE(m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget")->findChild<QLabel*>("headerLabel")->text(),
+    QCOMPARE(mainEntryEditor(m_dbWidget)->findChild<QLabel*>("headerLabel")->text(),
              QStringLiteral("Good \u2022 Doggy \u2022 Edit entry"));
 }
 
@@ -833,12 +857,13 @@ void TestGui::testAddEntry()
     QVERIFY(entryNewWidget->isVisible());
     QVERIFY(entryNewWidget->isEnabled());
 
-    // Click the new entry button and check that we enter edit mode
+    // Click the new entry button. The editor opens beside the list, which stays visible.
     QTest::mouseClick(entryNewWidget, Qt::LeftButton);
-    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
+    QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::ViewMode);
+    QVERIFY(entryView->isVisible());
 
     // Add entry "test" and confirm added
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QTest::keyClicks(titleEdit, "test");
     auto* usernameComboBox = editEntryWidget->findChild<QComboBox*>("usernameComboBox");
@@ -958,7 +983,7 @@ void TestGui::testPasswordEntryEntropy()
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
     // Add entry "test" and confirm added
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QTest::keyClicks(titleEdit, "test");
 
@@ -1020,7 +1045,7 @@ void TestGui::testDicewareEntryEntropy()
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
     // Add entry "test" and confirm added
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QTest::keyClicks(titleEdit, "test");
 
@@ -1107,7 +1132,7 @@ void TestGui::testTotp()
     QTest::mouseClick(entryEditWidget, Qt::LeftButton);
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     editEntryWidget->switchToPage(EditEntryWidget::Page::Advanced);
     QApplication::processEvents();
     // Find the "TOTP Seed" attribute in the list view
@@ -1368,7 +1393,7 @@ void TestGui::testSearch()
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
     // Perform the edit and save it
-    EditEntryWidget* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    EditEntryWidget* editEntryWidget = mainEntryEditor(m_dbWidget);
     QLineEdit* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QString origTitle = titleEdit->text();
     QTest::keyClicks(titleEdit, "_edited");
@@ -1526,7 +1551,7 @@ void TestGui::testEntryPlaceholders()
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
     // Add entry "test" and confirm added
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QTest::keyClicks(titleEdit, "test");
     QComboBox* usernameComboBox = editEntryWidget->findChild<QComboBox*>("usernameComboBox");
@@ -1878,7 +1903,7 @@ void TestGui::testDatabaseSettings()
     QTest::mouseClick(entryNewWidget, Qt::LeftButton);
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     QVERIFY(editEntryWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     QVERIFY(titleEdit);
@@ -2226,7 +2251,7 @@ void TestGui::testAutoType()
     QTest::mouseClick(entryNewWidget, Qt::LeftButton);
     QCOMPARE(m_dbWidget->currentMode(), DatabaseWidget::Mode::EditEntryMode);
 
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     QVERIFY(editEntryWidget);
 
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
@@ -2571,7 +2596,7 @@ void TestGui::addCannedEntries()
     // Find buttons
     auto* toolBar = m_mainWindow->findChild<QToolBar*>("toolBar");
     QWidget* entryNewWidget = toolBar->widgetForAction(m_mainWindow->findChild<QAction*>("actionEntryNew"));
-    auto* editEntryWidget = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+    auto* editEntryWidget = mainEntryEditor(m_dbWidget);
     auto* titleEdit = editEntryWidget->findChild<QLineEdit*>("titleEdit");
     auto* passwordEdit =
         editEntryWidget->findChild<PasswordWidget*>("passwordEdit")->findChild<QLineEdit*>("passwordEdit");

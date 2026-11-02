@@ -36,6 +36,8 @@ public:
     bool copyFromFile(const QString& otherFileName);
 
     static QString createTempConfigFile();
+    // Local settings (recent databases, quick unlock) must not use the real user file.
+    static QString createTempLocalConfigFile();
 };
 
 #endif // KEEPASSXC_TEMPORARYFILE_H

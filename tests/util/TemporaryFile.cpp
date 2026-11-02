@@ -24,20 +24,32 @@
 namespace
 {
     QPointer<TemporaryFile> g_tempConfigFile;
+    QPointer<TemporaryFile> g_tempLocalConfigFile;
+
+    QString makeTempConfigFile(QPointer<TemporaryFile>& slot, const QString& suffix)
+    {
+        if (!qApp) {
+            Q_ASSERT(false);
+            return {};
+        }
+        if (slot) {
+            delete slot;
+        }
+        auto tmpFileName =
+            QString("%1/%2_%3.XXXXXX").arg(QDir::tempPath(), QCoreApplication::applicationName(), suffix);
+        slot = new TemporaryFile(tmpFileName, qApp);
+        return slot->fileName();
+    }
 }
 
 QString TemporaryFile::createTempConfigFile()
 {
-    if (!qApp) {
-        Q_ASSERT(false);
-        return {};
-    }
-    if (g_tempConfigFile) {
-        delete g_tempConfigFile;
-    }
-    auto tmpFileName = QString("%1/%2_settings.XXXXXX").arg(QDir::tempPath(), QCoreApplication::applicationName());
-    g_tempConfigFile = new TemporaryFile(tmpFileName, qApp);
-    return g_tempConfigFile->fileName();
+    return makeTempConfigFile(g_tempConfigFile, QStringLiteral("settings"));
+}
+
+QString TemporaryFile::createTempLocalConfigFile()
+{
+    return makeTempConfigFile(g_tempLocalConfigFile, QStringLiteral("local_settings"));
 }
 
 TemporaryFile::TemporaryFile()

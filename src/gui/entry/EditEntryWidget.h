@@ -94,10 +94,13 @@ signals:
     void editFinished(bool accepted);
     void historyEntryActivated(Entry* entry);
 
+public slots:
+    // Close this editor. Asks before throwing away unsaved changes.
+    void cancel();
+
 private slots:
     void acceptEntry();
     bool commitEntry();
-    void cancel();
 #ifdef KPXC_FEATURE_NETWORK
     void updateFaviconButtonEnable(const QString& url);
 #endif
